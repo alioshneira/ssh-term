@@ -1,0 +1,12 @@
+[
+  {
+    "id": "srv-example",
+    "name": "Servidor de Ejemplo",
+    "host": "192.168.1.50",
+    "port": 22,
+    "username": "ubuntu",
+    "authType": "password",
+    "group": "Desarrollo",
+    "description": "Plantilla de configuración de servidor"
+  }
+]
