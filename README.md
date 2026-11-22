@@ -110,3 +110,28 @@ Abre tu navegador en:
 1. Iniciar backend: `npm run server`
 2. En otra terminal iniciar frontend Vite: `npm run dev`
 3. Abre `http://localhost:3000`.
+
+---
+
+## 🔒 Habilitar HTTPS / WSS (Cifrado TLS)
+
+La aplicación soporta **HTTPS nativo** (y conexión WebSocket segura `wss://`):
+
+### 1. Generar certificados autofirmados (para pruebas o red local):
+```bash
+npm run ssl:gen
+```
+Este comando crea `data/ssl/cert.pem` y `data/ssl/key.pem` con permisos seguros.
+
+### 2. Activar HTTPS en `.env`:
+Modifica en tu archivo `.env`:
+```env
+SSL_ENABLED=true
+SSL_CERT_PATH=data/ssl/cert.pem
+SSL_KEY_PATH=data/ssl/key.pem
+```
+
+Al iniciar la aplicación (`npm run app`), el servidor responderá exclusivamente a través de:
+👉 **`https://localhost:3001`** (y `wss://localhost:3001/ws/ssh`).
+*(Si usas certificados de producción de Let's Encrypt o corporativos, solo debes apuntar las variables `SSL_CERT_PATH` y `SSL_KEY_PATH` a tus archivos `.pem` o `.crt` correspondientes).*
+

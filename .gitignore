@@ -25,6 +25,7 @@ data/servers.json
 data/keys.json
 !data/keys.example.json
 data/.encryption_key
+data/ssl/
 
 # Archivos del sistema operativo y editores
 .DS_Store

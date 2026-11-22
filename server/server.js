@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const http = require('http');
+const https = require('https');
+const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const express = require('express');
@@ -180,7 +182,37 @@ app.use((req, res, next) => {
   });
 });
 
-const server = http.createServer(app);
+const SSL_ENABLED = process.env.SSL_ENABLED === 'true';
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH
+  ? path.resolve(process.env.SSL_CERT_PATH)
+  : path.join(__dirname, '..', 'data', 'ssl', 'cert.pem');
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH
+  ? path.resolve(process.env.SSL_KEY_PATH)
+  : path.join(__dirname, '..', 'data', 'ssl', 'key.pem');
+
+let server;
+let protocol = 'http';
+
+if (SSL_ENABLED) {
+  if (!fs.existsSync(SSL_CERT_PATH) || !fs.existsSync(SSL_KEY_PATH)) {
+    console.error(`\n[SSL Error] No se encontraron los certificados en:`);
+    console.error(` - Certificado: ${SSL_CERT_PATH}`);
+    console.error(` - Clave privada: ${SSL_KEY_PATH}`);
+    console.error(`Ejecuta 'npm run ssl:gen' para generar certificados de prueba o desactiva SSL_ENABLED en .env\n`);
+    process.exit(1);
+  }
+
+  const sslOptions = {
+    cert: fs.readFileSync(SSL_CERT_PATH),
+    key: fs.readFileSync(SSL_KEY_PATH)
+  };
+
+  server = https.createServer(sslOptions, app);
+  protocol = 'https';
+} else {
+  server = http.createServer(app);
+}
+
 const wss = new WebSocketServer({ server, path: '/ws/ssh' });
 
 wss.on('connection', (ws, req) => {
@@ -419,8 +451,9 @@ wss.on('connection', (ws, req) => {
 server.listen(PORT, () => {
   console.log(`=========================================`);
   console.log(` WebSSH Terminal Server v2.0 (Seguro)`);
+  console.log(` Protocolo: ${protocol.toUpperCase()} & ${protocol === 'https' ? 'WSS (Cifrado TLS)' : 'WS'}`);
   console.log(` Autenticación: LDAP / Active Directory`);
   console.log(` Cifrado en reposo: AES-256-GCM`);
-  console.log(` HTTP & WebSocket en http://localhost:${PORT}`);
+  console.log(` Acceso en: ${protocol}://localhost:${PORT}`);
   console.log(`=========================================`);
 });
