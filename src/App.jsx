@@ -9,6 +9,8 @@ import {
   LogOut,
   User,
   Shield,
+  History,
+  AlertTriangle,
   Play
 } from 'lucide-react';
 import TerminalView from './components/TerminalView';
@@ -17,6 +19,8 @@ import ServerModal from './components/ServerModal';
 import QuickConnectModal from './components/QuickConnectModal';
 import KeyVaultModal from './components/KeyVaultModal';
 import LoginModal from './components/LoginModal';
+import AdminPanelModal from './components/AdminPanelModal';
+import UserHistoryModal from './components/UserHistoryModal';
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('ssh_term_token'));
@@ -33,12 +37,15 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [servers, setServers] = useState([]);
   const [keys, setKeys] = useState([]);
+  const [pendingUsersCount, setPendingUsersCount] = useState(0);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [serverToEdit, setServerToEdit] = useState(null);
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
   const [isKeyVaultOpen, setIsKeyVaultOpen] = useState(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   // Helper para peticiones con autorización JWT
   const authFetch = async (url, options = {}) => {
@@ -53,6 +60,18 @@ export default function App() {
       throw new Error('Sesión expirada o no autorizada');
     }
     return res;
+  };
+
+  const checkAuthMe = async () => {
+    try {
+      const res = await authFetch('/api/auth/me');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.pendingUsersCount !== undefined) {
+          setPendingUsersCount(data.pendingUsersCount);
+        }
+      }
+    } catch (e) {}
   };
 
   // Cargar servidores y llaves cuando hay sesión activa
@@ -84,14 +103,16 @@ export default function App() {
     if (token) {
       fetchServers();
       fetchKeys();
+      checkAuthMe();
     }
   }, [token]);
 
-  const handleLoginSuccess = (newToken, user) => {
+  const handleLoginSuccess = (newToken, user, initialPendingCount = 0) => {
     localStorage.setItem('ssh_term_token', newToken);
     localStorage.setItem('ssh_term_user', JSON.stringify(user));
     setToken(newToken);
     setCurrentUser(user);
+    setPendingUsersCount(initialPendingCount);
   };
 
   const handleLogout = () => {
@@ -136,14 +157,12 @@ export default function App() {
     });
   };
 
-  // Actualizar estado de conexión
   const handleStatusChange = (sessionId, newStatus) => {
     setSessions(prev =>
       prev.map(s => (s.id === sessionId ? { ...s, status: newStatus } : s))
     );
   };
 
-  // Guardar o actualizar servidor
   const handleSaveServer = async (serverData) => {
     try {
       const res = await authFetch('/api/servers', {
@@ -160,7 +179,6 @@ export default function App() {
     }
   };
 
-  // Duplicar servidor
   const handleDuplicateServer = async (id) => {
     try {
       const res = await authFetch(`/api/servers/${id}/duplicate`, {
@@ -175,7 +193,6 @@ export default function App() {
     }
   };
 
-  // Eliminar servidor
   const handleDeleteServer = async (id) => {
     try {
       const res = await authFetch(`/api/servers/${id}`, {
@@ -190,7 +207,6 @@ export default function App() {
     }
   };
 
-  // Guardar o actualizar llave SSH en Key Vault
   const handleSaveKey = async (keyData) => {
     try {
       const res = await authFetch('/api/keys', {
@@ -201,14 +217,13 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setKeys(data.keys);
-        fetchServers(); // Refrescar referencias de llaves en servidores
+        fetchServers();
       }
     } catch (err) {
       console.error('Error guardando llave SSH:', err);
     }
   };
 
-  // Eliminar llave SSH
   const handleDeleteKey = async (id) => {
     try {
       const res = await authFetch(`/api/keys/${id}`, {
@@ -234,7 +249,8 @@ export default function App() {
     setIsServerModalOpen(true);
   };
 
-  // Si no está autenticado, mostrar la pantalla de Login LDAP
+  const isAdmin = currentUser?.isGlobalAdmin || currentUser?.role === 'global_admin' || currentUser?.role === 'admin';
+
   if (!token) {
     return <LoginModal onLoginSuccess={handleLoginSuccess} />;
   }
@@ -299,6 +315,33 @@ export default function App() {
           </button>
 
           <button
+            className="btn"
+            onClick={() => setIsHistoryOpen(true)}
+            title="Mi historial de conexiones SSH"
+          >
+            <History size={14} />
+            <span>Historial</span>
+          </button>
+
+          {/* Botón de Panel Admin si tiene privilegios */}
+          {isAdmin && (
+            <button
+              className="btn"
+              style={{ borderColor: 'rgba(59, 130, 246, 0.4)', background: 'rgba(59, 130, 246, 0.1)' }}
+              onClick={() => setIsAdminPanelOpen(true)}
+              title="Panel de Administración y Control RBAC"
+            >
+              <Shield size={14} color="var(--accent-blue)" />
+              <span>Admin</span>
+              {pendingUsersCount > 0 && (
+                <span className="badge-pending-count" title={`${pendingUsersCount} usuarios pendientes de aprobación`}>
+                  {pendingUsersCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          <button
             className={`btn ${isSidebarOpen ? 'btn-primary' : ''}`}
             onClick={() => setIsSidebarOpen(prev => !prev)}
             title="Ver servidores guardados"
@@ -308,8 +351,8 @@ export default function App() {
           </button>
 
           {/* Perfil de usuario y Logout */}
-          <div className="user-profile-badge" title={`Conectado como ${currentUser?.displayName || currentUser?.username}`}>
-            <div className="user-avatar">
+          <div className="user-profile-badge" title={`Conectado como ${currentUser?.displayName || currentUser?.username} (${currentUser?.role || 'user'})`}>
+            <div className="user-avatar" style={{ background: isAdmin ? 'var(--accent-purple)' : 'var(--accent-blue)' }}>
               {(currentUser?.displayName || currentUser?.username || 'U')[0].toUpperCase()}
             </div>
             <span className="user-name">
@@ -350,7 +393,7 @@ export default function App() {
               <h2>WebSSH Terminal</h2>
               <p>
                 Cliente SSH interactivo seguro para múltiples servidores Linux.
-                Protegido con <strong>autenticación LDAP</strong> y <strong>cifrado AES-256-GCM</strong> en reposo.
+                Protegido con <strong>control de acceso RBAC</strong>, <strong>aprobación LDAP</strong> y <strong>cifrado en reposo AES-256-GCM</strong>.
               </p>
 
               <div className="empty-quick-actions">
@@ -380,7 +423,7 @@ export default function App() {
               {servers.length > 0 && (
                 <div style={{ marginTop: '28px', textAlign: 'left' }}>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                    Conexión rápida a servidores guardados:
+                    Tus servidores autorizados:
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     {servers.slice(0, 4).map(srv => (
@@ -461,6 +504,23 @@ export default function App() {
         keys={keys}
         onSaveKey={handleSaveKey}
         onDeleteKey={handleDeleteKey}
+      />
+
+      <AdminPanelModal
+        isOpen={isAdminPanelOpen}
+        onClose={() => setIsAdminPanelOpen(false)}
+        authFetch={authFetch}
+        allServers={servers}
+        onRefreshData={() => {
+          fetchServers();
+          checkAuthMe();
+        }}
+      />
+
+      <UserHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        authFetch={authFetch}
       />
     </div>
   );

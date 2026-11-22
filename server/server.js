@@ -13,6 +13,7 @@ const jwt = require('jsonwebtoken');
 
 const storage = require('./storage');
 const ldap = require('./ldap');
+const rbac = require('./rbac');
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'ssh-term-secret-key-fallback-2026';
@@ -47,7 +48,7 @@ function authMiddleware(req, res, next) {
 }
 
 // ----------------------------------------------------
-// RUTAS DE AUTENTICACIÓN LDAP
+// RUTAS DE AUTENTICACIÓN LDAP Y APROBACIÓN DE USUARIOS
 // ----------------------------------------------------
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -56,14 +57,85 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
+    // 1. Validar credenciales con LDAP
     const userProfile = await ldap.authenticate(username, password);
 
-    const token = jwt.sign(
-      {
+    // 2. Comprobar si es el Administrador Global configurado en .env
+    const isGlobal = rbac.isGlobalAdmin(userProfile);
+
+    let userRecord = storage.getUser(userProfile.username);
+
+    if (isGlobal) {
+      // El administrador global se auto-aprueba con rol global_admin permanente
+      userRecord = storage.saveUser({
         username: userProfile.username,
         displayName: userProfile.displayName,
         email: userProfile.email,
-        groups: userProfile.groups
+        dn: userProfile.dn,
+        ldapGroups: userProfile.groups,
+        role: 'global_admin',
+        status: 'active',
+        accessGroups: ['*'],
+        lastLoginAt: new Date().toISOString()
+      });
+    } else {
+      // Si no existe, registrarlo con estado 'pending' (requiere aprobación)
+      if (!userRecord) {
+        userRecord = storage.saveUser({
+          username: userProfile.username,
+          displayName: userProfile.displayName,
+          email: userProfile.email,
+          dn: userProfile.dn,
+          ldapGroups: userProfile.groups,
+          role: 'user',
+          status: 'pending',
+          accessGroups: [],
+          lastLoginAt: null
+        });
+
+        return res.status(403).json({
+          code: 'ACCOUNT_PENDING',
+          error: 'Tu cuenta ha sido registrada en el sistema, pero requiere aprobación por el Administrador Global antes de poder ingresar.'
+        });
+      }
+
+      // Si existe pero está pendiente de aprobación
+      if (userRecord.status === 'pending') {
+        return res.status(403).json({
+          code: 'ACCOUNT_PENDING',
+          error: 'Tu cuenta aún está pendiente de aprobación por el Administrador Global. Por favor contacta al administrador.'
+        });
+      }
+
+      // Si la cuenta ha sido deshabilitada
+      if (userRecord.status === 'disabled') {
+        return res.status(403).json({
+          code: 'ACCOUNT_DISABLED',
+          error: 'Tu cuenta ha sido deshabilitada por el Administrador.'
+        });
+      }
+
+      // Usuario activo: actualizar última fecha de login
+      userRecord = storage.saveUser({
+        ...userRecord,
+        displayName: userProfile.displayName || userRecord.displayName,
+        email: userProfile.email || userRecord.email,
+        dn: userProfile.dn || userRecord.dn,
+        ldapGroups: userProfile.groups || userRecord.ldapGroups,
+        lastLoginAt: new Date().toISOString()
+      });
+    }
+
+    // 3. Emitir token JWT con roles y grupos de acceso
+    const token = jwt.sign(
+      {
+        username: userRecord.username,
+        displayName: userRecord.displayName,
+        email: userRecord.email,
+        dn: userRecord.dn,
+        role: userRecord.role,
+        accessGroups: userRecord.accessGroups,
+        isGlobalAdmin: isGlobal
       },
       JWT_SECRET,
       { expiresIn: '24h' }
@@ -73,11 +145,15 @@ app.post('/api/auth/login', async (req, res) => {
       success: true,
       token,
       user: {
-        username: userProfile.username,
-        displayName: userProfile.displayName,
-        email: userProfile.email,
-        groups: userProfile.groups
-      }
+        username: userRecord.username,
+        displayName: userRecord.displayName,
+        email: userRecord.email,
+        role: userRecord.role,
+        status: userRecord.status,
+        accessGroups: userRecord.accessGroups,
+        isGlobalAdmin: isGlobal
+      },
+      pendingUsersCount: isGlobal ? storage.getPendingUsersCount() : 0
     });
   } catch (err) {
     res.status(401).json({ error: err.message });
@@ -85,14 +161,71 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
-  res.json({ user: req.user });
+  const isGlobal = rbac.isGlobalAdmin(req.user);
+  res.json({
+    user: req.user,
+    pendingUsersCount: isGlobal ? storage.getPendingUsersCount() : 0
+  });
 });
 
 // ----------------------------------------------------
-// RUTAS DE SERVIDORES (PROTEGIDAS)
+// RUTAS DE ADMINISTRACIÓN (USUARIOS, APROBACIÓN, GRUPOS, LOGS)
+// ----------------------------------------------------
+app.get('/api/admin/users', authMiddleware, rbac.requireAdmin, (req, res) => {
+  res.json(storage.getUsers());
+});
+
+app.post('/api/admin/users/:username/status', authMiddleware, rbac.requireAdmin, (req, res) => {
+  try {
+    const { status, role, accessGroups } = req.body;
+    const updatedUser = storage.updateUserStatus(req.params.username, {
+      status,
+      role,
+      accessGroups
+    });
+    res.json({ success: true, user: updatedUser, users: storage.getUsers() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/groups', authMiddleware, rbac.requireAdmin, (req, res) => {
+  res.json(storage.getGroups());
+});
+
+app.post('/api/admin/groups', authMiddleware, rbac.requireAdmin, (req, res) => {
+  try {
+    const updatedGroups = storage.saveGroup(req.body);
+    res.json({ success: true, groups: updatedGroups });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/groups/:id', authMiddleware, rbac.requireAdmin, (req, res) => {
+  try {
+    const updatedGroups = storage.deleteGroup(req.params.id);
+    res.json({ success: true, groups: updatedGroups });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/audit-logs', authMiddleware, rbac.requireAdmin, (req, res) => {
+  res.json(storage.getAuditLogs(req.query));
+});
+
+// Ruta para que el usuario consulte su propio historial de accesos
+app.get('/api/audit-logs/my', authMiddleware, (req, res) => {
+  res.json(storage.getUserAuditLogs(req.user.username));
+});
+
+// ----------------------------------------------------
+// RUTAS DE SERVIDORES (FILTRADO POR RBAC)
 // ----------------------------------------------------
 app.get('/api/servers', authMiddleware, (req, res) => {
-  res.json(storage.getServers());
+  // Solo devuelve los servidores a los que el usuario tiene acceso
+  res.json(storage.getServersForUser(req.user));
 });
 
 app.post('/api/servers', authMiddleware, (req, res) => {
@@ -100,22 +233,22 @@ app.post('/api/servers', authMiddleware, (req, res) => {
   if (!server.host || !server.username) {
     return res.status(400).json({ error: 'Host y usuario son requeridos' });
   }
-  const updatedList = storage.addOrUpdateServer(server);
-  res.json({ success: true, servers: updatedList });
+  storage.addOrUpdateServer(server);
+  res.json({ success: true, servers: storage.getServersForUser(req.user) });
 });
 
 app.post('/api/servers/:id/duplicate', authMiddleware, (req, res) => {
   try {
-    const updatedList = storage.duplicateServer(req.params.id);
-    res.json({ success: true, servers: updatedList });
+    storage.duplicateServer(req.params.id);
+    res.json({ success: true, servers: storage.getServersForUser(req.user) });
   } catch (err) {
     res.status(404).json({ error: err.message });
   }
 });
 
 app.delete('/api/servers/:id', authMiddleware, (req, res) => {
-  const updatedList = storage.deleteServer(req.params.id);
-  res.json({ success: true, servers: updatedList });
+  storage.deleteServer(req.params.id);
+  res.json({ success: true, servers: storage.getServersForUser(req.user) });
 });
 
 // ----------------------------------------------------
@@ -182,6 +315,9 @@ app.use((req, res, next) => {
   });
 });
 
+// ----------------------------------------------------
+// CONFIGURACIÓN HTTP / HTTPS Y WEBSOCKETS
+// ----------------------------------------------------
 const SSL_ENABLED = process.env.SSL_ENABLED === 'true';
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH
   ? path.resolve(process.env.SSL_CERT_PATH)
@@ -220,6 +356,10 @@ wss.on('connection', (ws, req) => {
   let sshStream = null;
   let isConnected = false;
   let authenticatedUser = null;
+  let currentAuditLogId = null;
+  let sessionStartTime = null;
+
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
 
   // Validar token JWT en query string si viene provisto
   const parsedUrl = url.parse(req.url, true);
@@ -228,9 +368,7 @@ wss.on('connection', (ws, req) => {
   if (tokenFromQuery) {
     try {
       authenticatedUser = jwt.verify(tokenFromQuery, JWT_SECRET);
-    } catch (e) {
-      // Se permitirá validar en el primer mensaje 'init' si no vino por query
-    }
+    } catch (e) {}
   }
 
   ws.on('message', (message) => {
@@ -238,13 +376,12 @@ wss.on('connection', (ws, req) => {
       const msg = JSON.parse(message);
 
       if (msg.type === 'init') {
-        // Validar token si aún no se autenticó
         if (!authenticatedUser) {
           const token = msg.token || tokenFromQuery;
           if (!token) {
             ws.send(JSON.stringify({
               type: 'error',
-              message: 'Conexión WebSocket rechazada: Token de sesión requerido.'
+              message: 'Conexión rechazada: Token de sesión requerido.'
             }));
             ws.close();
             return;
@@ -270,9 +407,32 @@ wss.on('connection', (ws, req) => {
         let privateKey = msg.privateKey;
         let passphrase = msg.passphrase;
         let keyId = msg.keyId;
+        let serverName = msg.name || `${username}@${host}`;
 
-        // Si se envió un serverId guardado, recuperar secretos cifrados de forma segura
+        // 1. Control de Acceso RBAC
         if (msg.serverId) {
+          // Verificar si el usuario tiene permiso para este servidor
+          const hasAccess = rbac.canAccessServer(authenticatedUser, msg.serverId);
+          if (!hasAccess) {
+            storage.appendAuditLog({
+              username: authenticatedUser.username,
+              userDisplayName: authenticatedUser.displayName,
+              serverId: msg.serverId,
+              serverName: serverName,
+              serverHost: host,
+              clientIp,
+              status: 'rejected_by_rbac',
+              details: 'Intento de conexión bloqueado por política de acceso RBAC'
+            });
+
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Acceso denegado: No tienes permisos asignados por el administrador para conectarte a este servidor.'
+            }));
+            ws.close();
+            return;
+          }
+
           const secretServer = storage.getServerSecret(msg.serverId);
           if (secretServer) {
             host = secretServer.host;
@@ -282,9 +442,9 @@ wss.on('connection', (ws, req) => {
             password = secretServer.password;
             privateKey = secretServer.privateKey;
             passphrase = secretServer.passphrase;
+            serverName = secretServer.name;
           }
         } else if (authType === 'saved_key' && keyId) {
-          // Si se seleccionó una llave compartida del Key Vault
           const secretKey = storage.getKeySecret(keyId);
           if (secretKey) {
             privateKey = secretKey.privateKey;
@@ -333,6 +493,21 @@ wss.on('connection', (ws, req) => {
 
         sshClient.on('ready', () => {
           isConnected = true;
+          sessionStartTime = Date.now();
+
+          // Registrar en log de auditoría
+          const logEntry = storage.appendAuditLog({
+            username: authenticatedUser.username,
+            userDisplayName: authenticatedUser.displayName,
+            serverId: msg.serverId || null,
+            serverName: serverName,
+            serverHost: host,
+            clientIp,
+            status: 'success',
+            details: 'Conexión SSH establecida con éxito'
+          });
+          currentAuditLogId = logEntry.id;
+
           ws.send(JSON.stringify({
             type: 'status',
             status: 'connected',
@@ -365,6 +540,11 @@ wss.on('connection', (ws, req) => {
             });
 
             stream.on('close', () => {
+              if (sessionStartTime && currentAuditLogId) {
+                const duration = Math.round((Date.now() - sessionStartTime) / 1000);
+                storage.updateAuditLogDuration(currentAuditLogId, duration);
+              }
+
               if (ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                   type: 'status',
@@ -388,6 +568,18 @@ wss.on('connection', (ws, req) => {
 
         sshClient.on('error', (err) => {
           console.error(`[SSH Error ${host}]:`, err.message);
+
+          storage.appendAuditLog({
+            username: authenticatedUser ? authenticatedUser.username : 'anónimo',
+            userDisplayName: authenticatedUser ? authenticatedUser.displayName : 'anónimo',
+            serverId: msg.serverId || null,
+            serverName: serverName,
+            serverHost: host,
+            clientIp,
+            status: 'failed',
+            details: `Fallo SSH: ${err.message}`
+          });
+
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
               type: 'error',
@@ -398,6 +590,11 @@ wss.on('connection', (ws, req) => {
 
         sshClient.on('close', () => {
           isConnected = false;
+          if (sessionStartTime && currentAuditLogId) {
+            const duration = Math.round((Date.now() - sessionStartTime) / 1000);
+            storage.updateAuditLogDuration(currentAuditLogId, duration);
+          }
+
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
               type: 'status',
@@ -432,6 +629,10 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    if (sessionStartTime && currentAuditLogId) {
+      const duration = Math.round((Date.now() - sessionStartTime) / 1000);
+      storage.updateAuditLogDuration(currentAuditLogId, duration);
+    }
     if (sshStream) {
       try { sshStream.end(); } catch (e) {}
     }
@@ -450,10 +651,11 @@ wss.on('connection', (ws, req) => {
 
 server.listen(PORT, () => {
   console.log(`=========================================`);
-  console.log(` WebSSH Terminal Server v2.0 (Seguro)`);
+  console.log(` WebSSH Terminal Server v2.1 (RBAC & Audit)`);
   console.log(` Protocolo: ${protocol.toUpperCase()} & ${protocol === 'https' ? 'WSS (Cifrado TLS)' : 'WS'}`);
-  console.log(` Autenticación: LDAP / Active Directory`);
-  console.log(` Cifrado en reposo: AES-256-GCM`);
+  console.log(` Administrador Global: ${process.env.GLOBAL_ADMIN_USER || 'admin'}`);
+  console.log(` Autenticación: LDAP / Active Directory con Aprobación`);
+  console.log(` Control de Acceso: RBAC + Grupos de Servidores`);
   console.log(` Acceso en: ${protocol}://localhost:${PORT}`);
   console.log(`=========================================`);
 });

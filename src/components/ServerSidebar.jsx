@@ -125,16 +125,19 @@ export default function ServerSidebar({
                 <span className="server-name">{server.name}</span>
               </div>
 
-              {/* Tags del servidor */}
-              {server.tags && server.tags.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '2px 0' }}>
-                  {server.tags.map(t => (
-                    <span key={t} className="server-tag">
-                      #{t}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {/* Tags y Grupos RBAC del servidor */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '2px 0' }}>
+                {server.groups && server.groups.map(g => (
+                  <span key={g.id} className="server-tag" style={{ color: 'var(--accent-blue)', borderColor: 'rgba(59, 130, 246, 0.3)' }} title="Grupo de Acceso RBAC">
+                    👥 {g.name}
+                  </span>
+                ))}
+                {server.tags && server.tags.map(t => (
+                  <span key={t} className="server-tag">
+                    #{t}
+                  </span>
+                ))}
+              </div>
 
               <div className="server-endpoint">
                 {server.authType === 'saved_key' ? (

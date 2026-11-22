@@ -1,27 +1,24 @@
-# WebSSH Terminal - Cliente SSH Web Multi-Servidor (v2.0)
+# WebSSH Terminal - Cliente SSH Web Multi-Servidor (v2.1)
 
-Una aplicación web moderna, rápida y segura de nivel empresarial que permite conectarte y administrar múltiples servidores Linux directamente desde tu navegador web, con soporte para pestañas simultáneas, autenticación corporativa LDAP, gestor de llaves privadas SSH (Key Vault) y cifrado fuerte en reposo.
+Una aplicación web moderna, rápida y de seguridad corporativa que permite conectarte y administrar múltiples servidores Linux directamente desde tu navegador web, con soporte para pestañas simultáneas, autenticación corporativa LDAP con flujo de aprobación, control de acceso basado en roles (RBAC), grupos de servidores y usuarios, registro de auditoría de sesiones y cifrado fuerte en reposo (AES-256-GCM).
 
 ---
 
-## Novedades de la Versión 2.0
+## Novedades de la Versión 2.1 (RBAC, Auditoría y Aprobación)
 
-- 🔒 **Cifrado en Reposo (AES-256-GCM)**:
-  - Todas las contraseñas y claves privadas se almacenan cifradas en el disco con un vector de inicialización (`iv`) único y autenticación de integridad (`authTag`).
-  - Las credenciales se descifran **únicamente en la memoria RAM** del proceso en el momento de establecer la sesión SSH.
-  - La API nunca devuelve claves o contraseñas en texto plano al frontend.
-- 🏢 **Autenticación Corporativa LDAP / Active Directory**:
-  - Integración nativa con directorios LDAP mediante `ldapts`.
-  - Control de acceso completo y emisión de sesiones seguras mediante **JWT**.
-  - Modo de desarrollo/fallback para pruebas locales (`LDAP_DEV_MODE=true`).
-- 🔑 **Gestor Independiente de Llaves SSH (Key Vault)**:
-  - Guarda tus claves privadas (RSA, Ed25519, OpenSSH con o sin passphrase) una sola vez como objetos independientes.
-  - Asocia una misma llave a múltiples servidores; al actualizar la llave en el Key Vault, el cambio se refleja en todos los servidores vinculados.
-- 🏷️ **Soporte para Múltiples Tags / Etiquetas**:
-  - Asigna múltiples etiquetas a cada servidor (ej. `#Producción`, `#AWS`, `#Database`, `#Nginx`).
-  - Barra de filtrado interactivo por etiquetas en la barra lateral para segmentar servidores al instante.
-- 📋 **Duplicación de Conexiones**:
-  - Botón de clonación inmediata en cada tarjeta de servidor para crear réplicas con un solo clic.
+- 👑 **Administrador Global (`GLOBAL_ADMIN_USER`)**:
+  - Variable en `.env` que define al superadministrador del sistema.
+  - Acceso total y permanente para gestionar usuarios, aprobar cuentas y administrar servidores.
+- 🚦 **Flujo de Aprobación de Usuarios LDAP**:
+  - Todo nuevo usuario que inicie sesión por LDAP entra en estado `pending` y no puede acceder al sistema hasta que el Administrador Global lo apruebe.
+- 🛡️ **Control de Acceso Basado en Roles (RBAC) y Grupos**:
+  - Creación de **Grupos de Acceso** (ej. *DevOps*, *DBAs*, *Frontend*).
+  - Los servidores y los usuarios se asignan a estos grupos.
+  - Los usuarios regulares **solo pueden ver y conectarse a los servidores autorizados** para su perfil.
+  - Validación de permisos en tiempo real tanto en la API como a nivel del WebSocket SSH.
+- 📜 **Registro de Auditoría de Accesos (Audit Trail)**:
+  - Registro de todas las sesiones: usuario, servidor, IP cliente, fecha/hora, resultado (`success`, `failed`, `rejected_by_rbac`) y duración en segundos.
+  - Panel administrativo con filtros y vista de historial personal para cada usuario.
 
 ---
 
