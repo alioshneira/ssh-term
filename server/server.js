@@ -1,23 +1,99 @@
+require('dotenv').config();
+
 const http = require('http');
 const path = require('path');
+const url = require('url');
 const express = require('express');
 const cors = require('cors');
 const { WebSocketServer, WebSocket } = require('ws');
 const { Client } = require('ssh2');
+const jwt = require('jsonwebtoken');
+
 const storage = require('./storage');
+const ldap = require('./ldap');
 
 const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'ssh-term-secret-key-fallback-2026';
+
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// API endpoints para gestión de servidores guardados
-app.get('/api/servers', (req, res) => {
+// Middleware de verificación de Token JWT
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  let token = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.query && req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Acceso no autorizado: Token JWT requerido' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+}
+
+// ----------------------------------------------------
+// RUTAS DE AUTENTICACIÓN LDAP
+// ----------------------------------------------------
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
+  }
+
+  try {
+    const userProfile = await ldap.authenticate(username, password);
+
+    const token = jwt.sign(
+      {
+        username: userProfile.username,
+        displayName: userProfile.displayName,
+        email: userProfile.email,
+        groups: userProfile.groups
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        username: userProfile.username,
+        displayName: userProfile.displayName,
+        email: userProfile.email,
+        groups: userProfile.groups
+      }
+    });
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/me', authMiddleware, (req, res) => {
+  res.json({ user: req.user });
+});
+
+// ----------------------------------------------------
+// RUTAS DE SERVIDORES (PROTEGIDAS)
+// ----------------------------------------------------
+app.get('/api/servers', authMiddleware, (req, res) => {
   res.json(storage.getServers());
 });
 
-app.post('/api/servers', (req, res) => {
+app.post('/api/servers', authMiddleware, (req, res) => {
   const server = req.body;
   if (!server.host || !server.username) {
     return res.status(400).json({ error: 'Host y usuario son requeridos' });
@@ -26,13 +102,45 @@ app.post('/api/servers', (req, res) => {
   res.json({ success: true, servers: updatedList });
 });
 
-app.delete('/api/servers/:id', (req, res) => {
+app.post('/api/servers/:id/duplicate', authMiddleware, (req, res) => {
+  try {
+    const updatedList = storage.duplicateServer(req.params.id);
+    res.json({ success: true, servers: updatedList });
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+app.delete('/api/servers/:id', authMiddleware, (req, res) => {
   const updatedList = storage.deleteServer(req.params.id);
   res.json({ success: true, servers: updatedList });
 });
 
-// Endpoint de prueba de ping TCP básico
-app.post('/api/test-connection', (req, res) => {
+// ----------------------------------------------------
+// RUTAS DE KEY VAULT (LLAVES SSH)
+// ----------------------------------------------------
+app.get('/api/keys', authMiddleware, (req, res) => {
+  res.json(storage.getKeys());
+});
+
+app.post('/api/keys', authMiddleware, (req, res) => {
+  const keyData = req.body;
+  if (!keyData.name) {
+    return res.status(400).json({ error: 'El nombre de la llave es requerido' });
+  }
+  const updatedList = storage.saveKey(keyData);
+  res.json({ success: true, keys: updatedList });
+});
+
+app.delete('/api/keys/:id', authMiddleware, (req, res) => {
+  const updatedList = storage.deleteKey(req.params.id);
+  res.json({ success: true, keys: updatedList });
+});
+
+// ----------------------------------------------------
+// TEST DE CONEXIÓN TCP
+// ----------------------------------------------------
+app.post('/api/test-connection', authMiddleware, (req, res) => {
   const { host, port = 22 } = req.body;
   const net = require('net');
   const socket = new net.Socket();
@@ -75,28 +183,87 @@ app.use((req, res, next) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws/ssh' });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   let sshClient = null;
   let sshStream = null;
   let isConnected = false;
+  let authenticatedUser = null;
+
+  // Validar token JWT en query string si viene provisto
+  const parsedUrl = url.parse(req.url, true);
+  const tokenFromQuery = parsedUrl.query.token;
+
+  if (tokenFromQuery) {
+    try {
+      authenticatedUser = jwt.verify(tokenFromQuery, JWT_SECRET);
+    } catch (e) {
+      // Se permitirá validar en el primer mensaje 'init' si no vino por query
+    }
+  }
 
   ws.on('message', (message) => {
     try {
       const msg = JSON.parse(message);
 
       if (msg.type === 'init') {
-        const {
-          host,
-          port = 22,
-          username,
-          authType = 'password',
-          password,
-          privateKey,
-          passphrase,
-          cols = 80,
-          rows = 24,
-          term = 'xterm-256color'
-        } = msg;
+        // Validar token si aún no se autenticó
+        if (!authenticatedUser) {
+          const token = msg.token || tokenFromQuery;
+          if (!token) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Conexión WebSocket rechazada: Token de sesión requerido.'
+            }));
+            ws.close();
+            return;
+          }
+          try {
+            authenticatedUser = jwt.verify(token, JWT_SECRET);
+          } catch (jwtErr) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Sesión expirada o token inválido. Por favor inicia sesión nuevamente.'
+            }));
+            ws.close();
+            return;
+          }
+        }
+
+        // Resolución de credenciales: serverId o ad-hoc
+        let host = msg.host;
+        let port = msg.port || 22;
+        let username = msg.username;
+        let authType = msg.authType || 'password';
+        let password = msg.password;
+        let privateKey = msg.privateKey;
+        let passphrase = msg.passphrase;
+        let keyId = msg.keyId;
+
+        // Si se envió un serverId guardado, recuperar secretos cifrados de forma segura
+        if (msg.serverId) {
+          const secretServer = storage.getServerSecret(msg.serverId);
+          if (secretServer) {
+            host = secretServer.host;
+            port = secretServer.port || 22;
+            username = secretServer.username;
+            authType = secretServer.authType;
+            password = secretServer.password;
+            privateKey = secretServer.privateKey;
+            passphrase = secretServer.passphrase;
+          }
+        } else if (authType === 'saved_key' && keyId) {
+          // Si se seleccionó una llave compartida del Key Vault
+          const secretKey = storage.getKeySecret(keyId);
+          if (secretKey) {
+            privateKey = secretKey.privateKey;
+            passphrase = secretKey.passphrase;
+            authType = 'key';
+          }
+        }
+
+        const cols = msg.cols || 80;
+        const rows = msg.rows || 24;
+        const term = msg.term || 'xterm-256color';
 
         if (!host || !username) {
           ws.send(JSON.stringify({
@@ -109,7 +276,7 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({
           type: 'status',
           status: 'connecting',
-          message: `Conectando por SSH a ${username}@${host}:${port}...`
+          message: `Iniciando conexión SSH hacia ${username}@${host}:${port}...`
         }));
 
         sshClient = new Client();
@@ -125,7 +292,7 @@ wss.on('connection', (ws) => {
 
         if (authType === 'password') {
           sshConfig.password = password;
-        } else if (authType === 'key') {
+        } else if (authType === 'key' || authType === 'saved_key') {
           sshConfig.privateKey = privateKey;
           if (passphrase) {
             sshConfig.passphrase = passphrase;
@@ -137,7 +304,7 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({
             type: 'status',
             status: 'connected',
-            message: '¡Conexión SSH establecida!'
+            message: '¡Conexión SSH autenticada con éxito!'
           }));
 
           sshClient.shell({
@@ -213,7 +380,7 @@ wss.on('connection', (ws) => {
         } catch (connErr) {
           ws.send(JSON.stringify({
             type: 'error',
-            message: `Fallo al iniciar conexión: ${connErr.message}`
+            message: `Fallo al inicializar cliente SSH: ${connErr.message}`
           }));
         }
       } else if (msg.type === 'data') {
@@ -251,7 +418,9 @@ wss.on('connection', (ws) => {
 
 server.listen(PORT, () => {
   console.log(`=========================================`);
-  console.log(` WebSSH Terminal Server activo`);
+  console.log(` WebSSH Terminal Server v2.0 (Seguro)`);
+  console.log(` Autenticación: LDAP / Active Directory`);
+  console.log(` Cifrado en reposo: AES-256-GCM`);
   console.log(` HTTP & WebSocket en http://localhost:${PORT}`);
   console.log(`=========================================`);
 });

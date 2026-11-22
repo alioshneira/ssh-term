@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { X, Terminal } from 'lucide-react';
+import { X, Terminal, Key } from 'lucide-react';
 
-export default function QuickConnectModal({ isOpen, onClose, onConnect }) {
+export default function QuickConnectModal({ isOpen, onClose, onConnect, keys = [] }) {
   const [formData, setFormData] = useState({
     name: '',
     host: '',
     port: 22,
     username: '',
-    authType: 'password',
+    authType: 'password', // 'password' | 'saved_key' | 'key'
+    keyId: '',
     password: '',
     privateKey: '',
     passphrase: '',
@@ -28,6 +29,11 @@ export default function QuickConnectModal({ isOpen, onClose, onConnect }) {
     e.preventDefault();
     if (!formData.host || !formData.username) {
       alert('Host y Usuario son obligatorios');
+      return;
+    }
+
+    if (formData.authType === 'saved_key' && !formData.keyId) {
+      alert('Por favor selecciona una llave del Key Vault');
       return;
     }
 
@@ -82,7 +88,7 @@ export default function QuickConnectModal({ isOpen, onClose, onConnect }) {
             </div>
 
             <div className="form-group">
-              <label>Usuario *</label>
+              <label>Usuario SSH *</label>
               <input
                 type="text"
                 className="form-input"
@@ -103,11 +109,14 @@ export default function QuickConnectModal({ isOpen, onClose, onConnect }) {
                 onChange={handleChange}
               >
                 <option value="password">Contraseña</option>
-                <option value="key">Clave Privada SSH</option>
+                {keys.length > 0 && (
+                  <option value="saved_key">🔑 Llave Guardada en Key Vault</option>
+                )}
+                <option value="key">Clave Privada Personalizada (Texto PEM)</option>
               </select>
             </div>
 
-            {formData.authType === 'password' ? (
+            {formData.authType === 'password' && (
               <div className="form-group">
                 <label>Contraseña</label>
                 <input
@@ -119,7 +128,29 @@ export default function QuickConnectModal({ isOpen, onClose, onConnect }) {
                   onChange={handleChange}
                 />
               </div>
-            ) : (
+            )}
+
+            {formData.authType === 'saved_key' && (
+              <div className="form-group">
+                <label>Selecciona la Llave del Key Vault</label>
+                <select
+                  className="form-select"
+                  name="keyId"
+                  value={formData.keyId}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="">-- Elige una llave guardada --</option>
+                  {keys.map(k => (
+                    <option key={k.id} value={k.id}>
+                      {k.name} ({k.keyType})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {formData.authType === 'key' && (
               <>
                 <div className="form-group">
                   <label>Clave Privada</label>

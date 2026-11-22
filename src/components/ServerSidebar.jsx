@@ -5,31 +5,47 @@ import {
   Play,
   Edit2,
   Trash2,
+  Copy,
   Search,
   ChevronLeft,
   Key,
-  Lock
+  Lock,
+  Tag
 } from 'lucide-react';
 
 export default function ServerSidebar({
   isOpen,
   onToggle,
   servers,
+  keys = [],
   onConnect,
   onAddNew,
   onEdit,
-  onDelete
+  onDuplicate,
+  onDelete,
+  onOpenKeyVault
 }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTag, setSelectedTag] = useState(null);
+
+  // Extraer todos los tags únicos disponibles
+  const allTags = Array.from(
+    new Set(
+      servers.flatMap(s => (Array.isArray(s.tags) ? s.tags : []))
+    )
+  ).filter(Boolean);
 
   const filteredServers = servers.filter(s => {
     const term = searchTerm.toLowerCase();
-    return (
+    const matchesSearch =
       (s.name && s.name.toLowerCase().includes(term)) ||
       (s.host && s.host.toLowerCase().includes(term)) ||
       (s.username && s.username.toLowerCase().includes(term)) ||
-      (s.group && s.group.toLowerCase().includes(term))
-    );
+      (s.tags && s.tags.some(t => t.toLowerCase().includes(term)));
+
+    const matchesTag = selectedTag ? (s.tags && s.tags.includes(selectedTag)) : true;
+
+    return matchesSearch && matchesTag;
   });
 
   return (
@@ -41,6 +57,9 @@ export default function ServerSidebar({
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({servers.length})</span>
         </div>
         <div style={{ display: 'flex', gap: '4px' }}>
+          <button className="btn btn-icon" onClick={onOpenKeyVault} title="Gestor de Llaves SSH (Key Vault)">
+            <Key size={15} color="var(--accent-purple)" />
+          </button>
           <button className="btn btn-icon" onClick={onAddNew} title="Agregar servidor">
             <Plus size={16} />
           </button>
@@ -51,16 +70,35 @@ export default function ServerSidebar({
       </div>
 
       <div className="sidebar-search">
-        <div style={{ position: 'relative' }}>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Buscar por nombre, host, tag..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
+        <input
+          type="text"
+          className="search-input"
+          placeholder="Buscar por host, nombre, tag..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
       </div>
+
+      {/* Barra de Filtros por Tags */}
+      {allTags.length > 0 && (
+        <div className="tag-filter-container">
+          <button
+            className={`tag-filter-btn ${selectedTag === null ? 'active' : ''}`}
+            onClick={() => setSelectedTag(null)}
+          >
+            Todos ({servers.length})
+          </button>
+          {allTags.map(tag => (
+            <button
+              key={tag}
+              className={`tag-filter-btn ${selectedTag === tag ? 'active' : ''}`}
+              onClick={() => setSelectedTag(prev => prev === tag ? null : tag)}
+            >
+              #{tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="server-list">
         {filteredServers.length === 0 ? (
@@ -77,7 +115,7 @@ export default function ServerSidebar({
                 </button>
               </>
             ) : (
-              <p>No hay coincidencias para "{searchTerm}"</p>
+              <p>No hay servidores que coincidan con el filtro.</p>
             )}
           </div>
         ) : (
@@ -85,17 +123,37 @@ export default function ServerSidebar({
             <div key={server.id} className="server-card">
               <div className="server-card-top">
                 <span className="server-name">{server.name}</span>
-                {server.group && <span className="server-tag">{server.group}</span>}
               </div>
 
+              {/* Tags del servidor */}
+              {server.tags && server.tags.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '2px 0' }}>
+                  {server.tags.map(t => (
+                    <span key={t} className="server-tag">
+                      #{t}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               <div className="server-endpoint">
-                {server.authType === 'key' ? (
+                {server.authType === 'saved_key' ? (
+                  <span title={`Usa llave guardada: ${server.keyInfo?.name || 'Key Vault'}`}>
+                    <Key size={12} color="var(--accent-purple)" style={{ display: 'inline', marginRight: '4px', verticalAlign: '-1px' }} />
+                  </span>
+                ) : server.authType === 'custom_key' ? (
                   <Key size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: '-1px' }} />
                 ) : (
                   <Lock size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: '-1px' }} />
                 )}
                 {server.username}@{server.host}:{server.port || 22}
               </div>
+
+              {server.keyInfo && (
+                <div style={{ fontSize: '11px', color: 'var(--accent-purple)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <Key size={10} /> Llave: {server.keyInfo.name} ({server.keyInfo.keyType})
+                </div>
+              )}
 
               {server.description && (
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -105,6 +163,13 @@ export default function ServerSidebar({
 
               <div className="server-card-actions">
                 <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className="btn btn-icon"
+                    onClick={() => onDuplicate(server.id)}
+                    title="Duplicar conexión"
+                  >
+                    <Copy size={13} color="var(--accent-blue)" />
+                  </button>
                   <button
                     className="btn btn-icon"
                     onClick={() => onEdit(server)}

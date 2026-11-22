@@ -1,0 +1,11 @@
+[
+  {
+    "id": "key-example",
+    "name": "Clave AWS Bastion (Ejemplo)",
+    "keyType": "RSA",
+    "description": "Plantilla de llave SSH para entorno de pruebas",
+    "hasPassphrase": false,
+    "createdAt": "2026-11-22T10:00:00.000Z",
+    "updatedAt": "2026-11-22T10:00:00.000Z"
+  }
+]

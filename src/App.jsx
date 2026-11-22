@@ -5,31 +5,60 @@ import {
   X,
   Server,
   Zap,
-  Globe,
-  Settings,
+  Key,
+  LogOut,
+  User,
   Shield,
-  CheckCircle,
   Play
 } from 'lucide-react';
 import TerminalView from './components/TerminalView';
 import ServerSidebar from './components/ServerSidebar';
 import ServerModal from './components/ServerModal';
 import QuickConnectModal from './components/QuickConnectModal';
+import KeyVaultModal from './components/KeyVaultModal';
+import LoginModal from './components/LoginModal';
 
 export default function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('ssh_term_token'));
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ssh_term_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [servers, setServers] = useState([]);
+  const [keys, setKeys] = useState([]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [serverToEdit, setServerToEdit] = useState(null);
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
+  const [isKeyVaultOpen, setIsKeyVaultOpen] = useState(false);
 
-  // Cargar lista de servidores guardados desde el backend
+  // Helper para peticiones con autorización JWT
+  const authFetch = async (url, options = {}) => {
+    const headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${token}`
+    };
+
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      handleLogout();
+      throw new Error('Sesión expirada o no autorizada');
+    }
+    return res;
+  };
+
+  // Cargar servidores y llaves cuando hay sesión activa
   const fetchServers = async () => {
     try {
-      const res = await fetch('/api/servers');
+      const res = await authFetch('/api/servers');
       if (res.ok) {
         const data = await res.json();
         setServers(data);
@@ -39,9 +68,40 @@ export default function App() {
     }
   };
 
+  const fetchKeys = async () => {
+    try {
+      const res = await authFetch('/api/keys');
+      if (res.ok) {
+        const data = await res.json();
+        setKeys(data);
+      }
+    } catch (err) {
+      console.error('Error al cargar llaves SSH:', err);
+    }
+  };
+
   useEffect(() => {
-    fetchServers();
-  }, []);
+    if (token) {
+      fetchServers();
+      fetchKeys();
+    }
+  }, [token]);
+
+  const handleLoginSuccess = (newToken, user) => {
+    localStorage.setItem('ssh_term_token', newToken);
+    localStorage.setItem('ssh_term_user', JSON.stringify(user));
+    setToken(newToken);
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('ssh_term_token');
+    localStorage.removeItem('ssh_term_user');
+    setToken(null);
+    setCurrentUser(null);
+    setSessions([]);
+    setActiveSessionId(null);
+  };
 
   // Iniciar una nueva sesión SSH en una pestaña
   const startSession = (serverConfig, saveToServerList = false) => {
@@ -76,7 +136,7 @@ export default function App() {
     });
   };
 
-  // Actualizar estado de conexión de una sesión específica
+  // Actualizar estado de conexión
   const handleStatusChange = (sessionId, newStatus) => {
     setSessions(prev =>
       prev.map(s => (s.id === sessionId ? { ...s, status: newStatus } : s))
@@ -86,7 +146,7 @@ export default function App() {
   // Guardar o actualizar servidor
   const handleSaveServer = async (serverData) => {
     try {
-      const res = await fetch('/api/servers', {
+      const res = await authFetch('/api/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(serverData)
@@ -100,10 +160,25 @@ export default function App() {
     }
   };
 
+  // Duplicar servidor
+  const handleDuplicateServer = async (id) => {
+    try {
+      const res = await authFetch(`/api/servers/${id}/duplicate`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setServers(data.servers);
+      }
+    } catch (err) {
+      console.error('Error duplicando servidor:', err);
+    }
+  };
+
   // Eliminar servidor
   const handleDeleteServer = async (id) => {
     try {
-      const res = await fetch(`/api/servers/${id}`, {
+      const res = await authFetch(`/api/servers/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -112,6 +187,40 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error eliminando servidor:', err);
+    }
+  };
+
+  // Guardar o actualizar llave SSH en Key Vault
+  const handleSaveKey = async (keyData) => {
+    try {
+      const res = await authFetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(keyData)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeys(data.keys);
+        fetchServers(); // Refrescar referencias de llaves en servidores
+      }
+    } catch (err) {
+      console.error('Error guardando llave SSH:', err);
+    }
+  };
+
+  // Eliminar llave SSH
+  const handleDeleteKey = async (id) => {
+    try {
+      const res = await authFetch(`/api/keys/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeys(data.keys);
+        fetchServers();
+      }
+    } catch (err) {
+      console.error('Error eliminando llave SSH:', err);
     }
   };
 
@@ -124,6 +233,11 @@ export default function App() {
     setServerToEdit(null);
     setIsServerModalOpen(true);
   };
+
+  // Si no está autenticado, mostrar la pantalla de Login LDAP
+  if (!token) {
+    return <LoginModal onLoginSuccess={handleLoginSuccess} />;
+  }
 
   return (
     <div className="app-container">
@@ -169,9 +283,19 @@ export default function App() {
           <button
             className="btn btn-primary"
             onClick={() => setIsQuickConnectOpen(true)}
+            title="Conexión SSH inmediata"
           >
             <Zap size={14} />
             <span>Conectar</span>
+          </button>
+
+          <button
+            className="btn"
+            onClick={() => setIsKeyVaultOpen(true)}
+            title="Gestor de Llaves SSH compartidas"
+          >
+            <Key size={14} color="var(--accent-purple)" />
+            <span>Llaves ({keys.length})</span>
           </button>
 
           <button
@@ -182,6 +306,23 @@ export default function App() {
             <Server size={14} />
             <span>Servidores ({servers.length})</span>
           </button>
+
+          {/* Perfil de usuario y Logout */}
+          <div className="user-profile-badge" title={`Conectado como ${currentUser?.displayName || currentUser?.username}`}>
+            <div className="user-avatar">
+              {(currentUser?.displayName || currentUser?.username || 'U')[0].toUpperCase()}
+            </div>
+            <span className="user-name">
+              {currentUser?.displayName || currentUser?.username}
+            </span>
+            <button
+              className="btn btn-icon btn-logout"
+              onClick={handleLogout}
+              title="Cerrar sesión LDAP"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -191,10 +332,13 @@ export default function App() {
           isOpen={isSidebarOpen}
           onToggle={() => setIsSidebarOpen(false)}
           servers={servers}
+          keys={keys}
           onConnect={startSession}
           onAddNew={handleAddNewServer}
           onEdit={handleEditServer}
+          onDuplicate={handleDuplicateServer}
           onDelete={handleDeleteServer}
+          onOpenKeyVault={() => setIsKeyVaultOpen(true)}
         />
 
         {sessions.length === 0 ? (
@@ -205,8 +349,8 @@ export default function App() {
               </div>
               <h2>WebSSH Terminal</h2>
               <p>
-                Cliente SSH web interactivo con emulación completa de terminal,
-                soporte para múltiples pestañas simultáneas y gestión segura de servidores Linux.
+                Cliente SSH interactivo seguro para múltiples servidores Linux.
+                Protegido con <strong>autenticación LDAP</strong> y <strong>cifrado AES-256-GCM</strong> en reposo.
               </p>
 
               <div className="empty-quick-actions">
@@ -223,6 +367,13 @@ export default function App() {
                   onClick={handleAddNewServer}
                 >
                   <Plus size={16} /> Guardar Servidor
+                </button>
+                <button
+                  className="btn"
+                  style={{ padding: '8px 16px', fontSize: '14px' }}
+                  onClick={() => setIsKeyVaultOpen(true)}
+                >
+                  <Key size={16} color="var(--accent-purple)" /> Key Vault
                 </button>
               </div>
 
@@ -254,6 +405,13 @@ export default function App() {
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                             {srv.username}@{srv.host}
                           </div>
+                          {srv.tags && srv.tags.length > 0 && (
+                            <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                              {srv.tags.slice(0, 2).map(t => (
+                                <span key={t} style={{ fontSize: '10px', color: 'var(--accent-color)' }}>#{t}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <Play size={14} color="var(--accent-color)" />
                       </div>
@@ -283,12 +441,26 @@ export default function App() {
         onClose={() => setIsServerModalOpen(false)}
         onSave={handleSaveServer}
         serverToEdit={serverToEdit}
+        keys={keys}
+        onOpenKeyVault={() => {
+          setIsServerModalOpen(false);
+          setIsKeyVaultOpen(true);
+        }}
       />
 
       <QuickConnectModal
         isOpen={isQuickConnectOpen}
         onClose={() => setIsQuickConnectOpen(false)}
         onConnect={startSession}
+        keys={keys}
+      />
+
+      <KeyVaultModal
+        isOpen={isKeyVaultOpen}
+        onClose={() => setIsKeyVaultOpen(false)}
+        keys={keys}
+        onSaveKey={handleSaveKey}
+        onDeleteKey={handleDeleteKey}
       />
     </div>
   );

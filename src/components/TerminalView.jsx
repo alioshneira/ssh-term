@@ -125,8 +125,9 @@ export default function TerminalView({ session, onStatusChange, isActive }) {
     setStatusMessage('Conectando con el servidor...');
     onStatusChange?.(session.id, 'connecting');
 
+    const token = localStorage.getItem('ssh_term_token');
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${window.location.host}/ws/ssh`;
+    const wsUrl = `${proto}//${window.location.host}/ws/ssh?token=${encodeURIComponent(token || '')}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -137,6 +138,9 @@ export default function TerminalView({ session, onStatusChange, isActive }) {
 
       ws.send(JSON.stringify({
         type: 'init',
+        token,
+        serverId: session.serverConfig.id,
+        keyId: session.serverConfig.keyId,
         host: session.serverConfig.host,
         port: session.serverConfig.port || 22,
         username: session.serverConfig.username,

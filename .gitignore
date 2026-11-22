@@ -19,9 +19,12 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
-# Datos de servidores locales (evitar subir credenciales o configuraciones privadas)
+# Datos de servidores y llaves locales (evitar subir credenciales o configuraciones privadas)
 data/servers.json
 !data/servers.example.json
+data/keys.json
+!data/keys.example.json
+data/.encryption_key
 
 # Archivos del sistema operativo y editores
 .DS_Store
