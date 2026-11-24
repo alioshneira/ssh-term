@@ -69,6 +69,7 @@ body {
   padding: 0 12px;
   gap: 12px;
   z-index: 10;
+  flex-shrink: 0;
 }
 
 .brand {
@@ -259,6 +260,7 @@ body {
 .workspace-body {
   display: flex;
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
 }
@@ -266,12 +268,17 @@ body {
 /* Sidebar */
 .sidebar {
   width: 320px;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
   background-color: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   transition: margin-left 0.2s ease;
   z-index: 5;
+  flex-shrink: 0;
 }
 
 .sidebar.collapsed {
@@ -284,11 +291,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .sidebar-search {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .search-input {
@@ -307,12 +316,35 @@ body {
 }
 
 .server-list {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.server-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.server-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.server-list::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.server-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .server-card {
@@ -323,6 +355,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
@@ -632,6 +665,7 @@ body {
   border-bottom: 1px solid var(--border-color);
   overflow-x: auto;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tag-filter-btn {
@@ -924,6 +958,7 @@ body {
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;
+  flex-shrink: 0;
 }
 
 .view-mode-toggle {
@@ -981,6 +1016,7 @@ body {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.01);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .server-group-header {
