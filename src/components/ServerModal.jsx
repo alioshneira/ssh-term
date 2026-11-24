@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Key, Lock, Activity, CheckCircle2, AlertCircle, Plus, Tag } from 'lucide-react';
+import { X, Key, Lock, Activity, CheckCircle2, AlertCircle, Plus, Tag, Folder } from 'lucide-react';
 
 export default function ServerModal({
   isOpen,
@@ -7,6 +7,8 @@ export default function ServerModal({
   onSave,
   serverToEdit,
   keys = [],
+  existingGroups = [],
+  defaultGroup = '',
   onOpenKeyVault
 }) {
   const [formData, setFormData] = useState({
@@ -19,6 +21,7 @@ export default function ServerModal({
     password: '',
     privateKey: '',
     passphrase: '',
+    group: 'General',
     tags: ['General'],
     description: ''
   });
@@ -33,11 +36,14 @@ export default function ServerModal({
         ? serverToEdit.tags
         : (serverToEdit.group ? [serverToEdit.group] : ['General']);
 
+      const initialGroup = serverToEdit.group || (serverToEdit.tags && serverToEdit.tags[0]) || 'General';
+
       setFormData({
         ...serverToEdit,
         port: serverToEdit.port || 22,
         authType: serverToEdit.authType || 'password',
         keyId: serverToEdit.keyId || '',
+        group: initialGroup,
         tags: initialTags,
         password: '', // Por seguridad no se rellenan contraseñas en claro
         privateKey: '',
@@ -54,13 +60,14 @@ export default function ServerModal({
         password: '',
         privateKey: '',
         passphrase: '',
+        group: defaultGroup || 'General',
         tags: ['General'],
         description: ''
       });
     }
     setTagInput('');
     setTestResult(null);
-  }, [serverToEdit, isOpen, keys]);
+  }, [serverToEdit, isOpen, keys, defaultGroup]);
 
   if (!isOpen) return null;
 
@@ -133,6 +140,7 @@ export default function ServerModal({
       ...formData,
       name: formData.name.trim() || `${formData.username}@${formData.host}`,
       port: Number(formData.port) || 22,
+      group: formData.group ? formData.group.trim() : 'General',
       tags: formData.tags.length > 0 ? formData.tags : ['General'],
       // Si estamos editando y no se escribió nueva contraseña/clave, omitir para conservar la previa
       password: formData.password ? formData.password : undefined,
@@ -204,10 +212,51 @@ export default function ServerModal({
               />
             </div>
 
+            {/* Grupo de Servidores / Categoría */}
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Folder size={13} color="var(--accent-blue)" /> Grupo de Servidores *
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                name="group"
+                list="existing-server-groups-list"
+                placeholder="ej. Producción, Bases de Datos, Staging, Desarrollo..."
+                required
+                value={formData.group}
+                onChange={handleChange}
+              />
+              <datalist id="existing-server-groups-list">
+                {existingGroups.map(g => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                {['Producción', 'Bases de Datos', 'Desarrollo', 'Staging', 'Infraestructura', 'Web'].map(suggested => (
+                  <button
+                    key={suggested}
+                    type="button"
+                    className="server-tag"
+                    style={{
+                      cursor: 'pointer',
+                      border: formData.group === suggested ? '1px solid var(--accent-blue)' : undefined,
+                      background: formData.group === suggested ? 'rgba(59, 130, 246, 0.2)' : undefined,
+                      color: formData.group === suggested ? 'var(--accent-blue)' : undefined,
+                      fontWeight: formData.group === suggested ? 600 : undefined
+                    }}
+                    onClick={() => setFormData(prev => ({ ...prev, group: suggested }))}
+                  >
+                    📁 {suggested}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Gestión de Tags / Etiquetas */}
             <div className="form-group">
               <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Tag size={13} /> Tags / Etiquetas
+                <Tag size={13} /> Tags / Etiquetas Adicionales
               </label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
                 {formData.tags.map(t => (

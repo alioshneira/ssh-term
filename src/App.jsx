@@ -239,13 +239,22 @@ export default function App() {
     }
   };
 
+  const [defaultServerGroup, setDefaultServerGroup] = useState('General');
+
+  const existingGroups = Array.from(
+    new Set(
+      servers.map(s => s.group || (s.tags && s.tags[0]) || 'General')
+    )
+  ).filter(Boolean);
+
   const handleEditServer = (server) => {
     setServerToEdit(server);
     setIsServerModalOpen(true);
   };
 
-  const handleAddNewServer = () => {
+  const handleAddNewServer = (group = 'General') => {
     setServerToEdit(null);
+    setDefaultServerGroup(typeof group === 'string' ? group : 'General');
     setIsServerModalOpen(true);
   };
 
@@ -485,6 +494,8 @@ export default function App() {
         onSave={handleSaveServer}
         serverToEdit={serverToEdit}
         keys={keys}
+        existingGroups={existingGroups}
+        defaultGroup={defaultServerGroup}
         onOpenKeyVault={() => {
           setIsServerModalOpen(false);
           setIsKeyVaultOpen(true);
