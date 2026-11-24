@@ -211,6 +211,10 @@ app.delete('/api/admin/groups/:id', authMiddleware, rbac.requireAdmin, (req, res
   }
 });
 
+app.get('/api/admin/servers', authMiddleware, rbac.requireAdmin, (req, res) => {
+  res.json(storage.getServers());
+});
+
 app.get('/api/admin/audit-logs', authMiddleware, rbac.requireAdmin, (req, res) => {
   res.json(storage.getAuditLogs(req.query));
 });

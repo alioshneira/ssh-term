@@ -15,13 +15,15 @@ import {
   Clock,
   Laptop,
   Lock,
-  UserCheck
+  UserCheck,
+  Folder
 } from 'lucide-react';
 
 export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers = [], onRefreshData }) {
   const [activeTab, setActiveTab] = useState('users'); // 'users' | 'groups' | 'audit'
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [adminServers, setAdminServers] = useState(allServers);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [auditFilter, setAuditFilter] = useState({ username: '', status: '' });
@@ -33,8 +35,17 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
     name: '',
     description: '',
     serverIds: [],
+    serverGroups: [],
     memberUsernames: []
   });
+  const [customServerGroupInput, setCustomServerGroupInput] = useState('');
+
+  // Sincronizar servidores recibidos por props
+  useEffect(() => {
+    if (allServers && allServers.length > 0) {
+      setAdminServers(allServers);
+    }
+  }, [allServers]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -45,9 +56,15 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
       } else if (activeTab === 'groups') {
         const res = await authFetch('/api/admin/groups');
         if (res.ok) setGroups(await res.json());
-        // También cargar usuarios para asignación
+        // Cargar usuarios para asignación
         const resUsers = await authFetch('/api/admin/users');
         if (resUsers.ok) setUsers(await resUsers.json());
+        // Cargar lista completa de servidores del backend para administradores
+        const resServers = await authFetch('/api/admin/servers');
+        if (resServers.ok) {
+          const srvList = await resServers.json();
+          setAdminServers(srvList);
+        }
       } else if (activeTab === 'audit') {
         const params = new URLSearchParams();
         if (auditFilter.username) params.append('username', auditFilter.username);
@@ -71,6 +88,27 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
       fetchData();
     }
   }, [isOpen, activeTab, auditFilter]);
+
+  // Grupos de servidores disponibles extraídos de todos los servidores registrados
+  const availableServerGroups = Array.from(
+    new Set(
+      adminServers.map(s => s.group || (s.tags && s.tags[0]) || 'General')
+    )
+  ).filter(Boolean);
+
+  const getServerCountByGroup = (groupName) => {
+    return adminServers.filter(s => (s.group || (s.tags && s.tags[0]) || 'General') === groupName).length;
+  };
+
+  const addCustomServerGroup = () => {
+    const trimmed = customServerGroupInput.trim();
+    if (!trimmed) return;
+    const current = groupFormData.serverGroups || [];
+    if (!current.includes(trimmed)) {
+      setGroupFormData({ ...groupFormData, serverGroups: [...current, trimmed] });
+    }
+    setCustomServerGroupInput('');
+  };
 
   if (!isOpen) return null;
 
@@ -110,7 +148,7 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
         const data = await res.json();
         setGroups(data.groups);
         setIsEditingGroup(false);
-        setGroupFormData({ id: null, name: '', description: '', serverIds: [], memberUsernames: [] });
+        setGroupFormData({ id: null, name: '', description: '', serverIds: [], serverGroups: [], memberUsernames: [] });
         onRefreshData?.();
       }
     } catch (err) {
@@ -296,12 +334,12 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                     <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      Los grupos permiten asociar servidores a usuarios de manera centralizada.
+                      Los grupos permiten asociar servidores y carpetas enteras a usuarios de manera centralizada.
                     </span>
                     <button
                       className="btn btn-primary"
                       onClick={() => {
-                        setGroupFormData({ id: null, name: '', description: '', serverIds: [], memberUsernames: [] });
+                        setGroupFormData({ id: null, name: '', description: '', serverIds: [], serverGroups: [], memberUsernames: [] });
                         setIsEditingGroup(true);
                       }}
                     >
@@ -321,7 +359,12 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                             <button
                               className="btn btn-icon"
                               onClick={() => {
-                                setGroupFormData(g);
+                                setGroupFormData({
+                                  ...g,
+                                  serverIds: g.serverIds || [],
+                                  serverGroups: g.serverGroups || [],
+                                  memberUsernames: g.memberUsernames || []
+                                });
                                 setIsEditingGroup(true);
                               }}
                               title="Editar grupo"
@@ -338,14 +381,31 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                           </div>
                         </div>
 
-                        <div style={{ marginTop: '10px', fontSize: '12px' }}>
+                        {/* Grupos de Servidores (Carpetas) asociados */}
+                        {g.serverGroups && g.serverGroups.length > 0 && (
+                          <div style={{ marginTop: '10px', fontSize: '12px' }}>
+                            <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                              📁 <strong>Grupos de Servidores ({g.serverGroups.length}):</strong>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                              {g.serverGroups.map(grpName => (
+                                <span key={grpName} className="server-group-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <Folder size={11} /> {grpName}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Servidores específicos asignados */}
+                        <div style={{ marginTop: '8px', fontSize: '12px' }}>
                           <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                            🖥️ <strong>Servidores ({g.serverIds ? g.serverIds.length : 0}):</strong>
+                            🖥️ <strong>Servidores específicos ({g.serverIds ? g.serverIds.length : 0}):</strong>
                           </div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                             {g.serverIds && g.serverIds.length > 0 ? (
                               g.serverIds.map(sid => {
-                                const srv = allServers.find(s => s.id === sid);
+                                const srv = adminServers.find(s => s.id === sid);
                                 return (
                                   <span key={sid} className="server-tag" style={{ color: 'var(--accent-blue)' }}>
                                     {srv ? srv.name : sid}
@@ -353,11 +413,14 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                                 );
                               })
                             ) : (
-                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ninguno</span>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                {g.serverGroups && g.serverGroups.length > 0 ? 'Habilitado por grupos' : 'Ninguno'}
+                              </span>
                             )}
                           </div>
                         </div>
 
+                        {/* Miembros */}
                         <div style={{ marginTop: '8px', fontSize: '12px' }}>
                           <div style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
                             👤 <strong>Usuarios miembros ({g.memberUsernames ? g.memberUsernames.length : 0}):</strong>
@@ -405,14 +468,85 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                     />
                   </div>
 
-                  {/* Selector de Servidores */}
+                  {/* Selector de Grupos de Servidores (Carpetas) */}
                   <div className="form-group">
-                    <label>Servidores accesibles por este grupo:</label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Folder size={15} color="var(--accent-blue)" />
+                        <strong>Acceso por Grupos de Servidores (Carpetas):</strong>
+                      </label>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Otorga acceso automático a todos los servidores de estas carpetas
+                      </span>
+                    </div>
+
+                    <div style={{ maxHeight: '140px', overflowY: 'auto', background: 'var(--bg-primary)', padding: '8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                      {availableServerGroups.length === 0 ? (
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No hay grupos de servidores registrados</p>
+                      ) : (
+                        availableServerGroups.map(grpName => {
+                          const checked = (groupFormData.serverGroups || []).includes(grpName);
+                          const count = getServerCountByGroup(grpName);
+                          return (
+                            <label key={grpName} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', fontSize: '12px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const current = groupFormData.serverGroups || [];
+                                  if (e.target.checked) {
+                                    setGroupFormData({ ...groupFormData, serverGroups: [...current, grpName] });
+                                  } else {
+                                    setGroupFormData({ ...groupFormData, serverGroups: current.filter(g => g !== grpName) });
+                                  }
+                                }}
+                              />
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Folder size={13} color="var(--accent-blue)" />
+                                <strong>{grpName}</strong>
+                                <span className="server-group-count">{count} {count === 1 ? 'servidor' : 'servidores'}</span>
+                              </span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Input para agregar o pre-configurar otro grupo de servidores */}
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        style={{ fontSize: '12px', padding: '4px 8px' }}
+                        placeholder="Otro grupo o carpeta personalizada (ej. Staging, Producción)..."
+                        value={customServerGroupInput}
+                        onChange={(e) => setCustomServerGroupInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addCustomServerGroup();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: '11px', padding: '4px 10px', whiteSpace: 'nowrap' }}
+                        onClick={addCustomServerGroup}
+                      >
+                        <Plus size={12} /> Añadir
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Selector de Servidores Individuales */}
+                  <div className="form-group">
+                    <label>Servidores específicos adicionales:</label>
                     <div style={{ maxHeight: '160px', overflowY: 'auto', background: 'var(--bg-primary)', padding: '8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                      {allServers.length === 0 ? (
+                      {adminServers.length === 0 ? (
                         <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No hay servidores registrados</p>
                       ) : (
-                        allServers.map(s => {
+                        adminServers.map(s => {
                           const checked = groupFormData.serverIds.includes(s.id);
                           return (
                             <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', fontSize: '12px', cursor: 'pointer' }}>
@@ -427,7 +561,10 @@ export default function AdminPanelModal({ isOpen, onClose, authFetch, allServers
                                   }
                                 }}
                               />
-                              <span><strong>{s.name}</strong> ({s.username}@{s.host})</span>
+                              <span>
+                                <strong>{s.name}</strong> ({s.username}@{s.host})
+                                {s.group && <span style={{ marginLeft: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>[📁 {s.group}]</span>}
+                              </span>
                             </label>
                           );
                         })

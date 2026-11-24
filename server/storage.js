@@ -182,6 +182,7 @@ function saveGroup(groupData) {
     name: groupData.name || 'Nuevo Grupo',
     description: groupData.description || '',
     serverIds: Array.isArray(groupData.serverIds) ? groupData.serverIds : [],
+    serverGroups: Array.isArray(groupData.serverGroups) ? groupData.serverGroups : [],
     serverTags: Array.isArray(groupData.serverTags) ? groupData.serverTags : [],
     memberUsernames: Array.isArray(groupData.memberUsernames) ? groupData.memberUsernames : [],
     createdAt: existingIdx >= 0 ? groups[existingIdx].createdAt : new Date().toISOString(),
@@ -503,6 +504,9 @@ function getServersForUser(user) {
 
       if (isMember) {
         if (Array.isArray(grp.serverIds) && grp.serverIds.includes(server.id)) {
+          return true;
+        }
+        if (Array.isArray(grp.serverGroups) && server.group && grp.serverGroups.includes(server.group)) {
           return true;
         }
         if (Array.isArray(grp.serverTags) && Array.isArray(server.tags) && grp.serverTags.some(t => server.tags.includes(t))) {

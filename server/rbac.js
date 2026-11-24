@@ -51,6 +51,10 @@ function canAccessServer(user, serverId) {
       if (Array.isArray(group.serverIds) && group.serverIds.includes(serverId)) {
         return true;
       }
+      // O si el grupo da acceso a la carpeta/grupo al que pertenece el servidor
+      if (Array.isArray(group.serverGroups) && targetServer.group && group.serverGroups.includes(targetServer.group)) {
+        return true;
+      }
       // O si el grupo tiene un tag que coincide con los tags del servidor
       if (Array.isArray(group.serverTags) && Array.isArray(targetServer.tags)) {
         if (group.serverTags.some(t => targetServer.tags.includes(t))) {
